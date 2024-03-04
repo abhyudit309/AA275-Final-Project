@@ -13,8 +13,13 @@ find_package(ament_cmake REQUIRED)
 
 install(PROGRAMS
   scripts/keyboard_teleop.py
+  scripts/localization/ekf_slam.py
+  scripts/localization/localization.py
   DESTINATION lib/${PROJECT_NAME}
 )
+
+install(DIRECTORY launch rviz
+        DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
