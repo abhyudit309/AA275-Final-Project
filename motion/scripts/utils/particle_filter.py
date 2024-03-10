@@ -322,7 +322,7 @@ class MonteCarloLocalization(ParticleFilter):
 
         return hs
     
-    def angle_diff(a, b):
+    def angle_diff(self, a, b):
         a = a % (2. * np.pi)
         b = b % (2. * np.pi)
         diff = a - b

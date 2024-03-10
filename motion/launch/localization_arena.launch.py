@@ -33,7 +33,7 @@ def generate_launch_description():
 
         # Localization node
         Node(
-            executable="ekf_slam_node_v2.py",
+            executable="pf_slam_node_v2.py",
             package="motion",
             parameters=[{
                 "use_sim_time": use_sim_time,

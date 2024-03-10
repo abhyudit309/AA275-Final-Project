@@ -179,20 +179,6 @@ class EkfSlam(Ekf):
         """
         Adapt this method from EkfLocalization.compute_innovations().
         """
-        def angle_diff(a, b):
-            a = a % (2.0 * np.pi)
-            b = b % (2.0 * np.pi)
-            diff = a - b
-            if np.size(diff) == 1:
-                if np.abs(a - b) > np.pi:
-                    sign = 2.0 * (diff < 0.0) - 1.0
-                    diff += sign * 2.0 * np.pi
-            else:
-                idx = np.abs(diff) > np.pi
-                sign = 2.0 * (diff[idx] < 0.0) - 1.0
-                diff[idx] += sign * 2.0 * np.pi
-            return diff
-
         hs, Hs = self.compute_predicted_measurements()
 
         # Compute v_list, Q_list, H_list.
@@ -207,7 +193,7 @@ class EkfSlam(Ekf):
             dij_min = np.inf
             for j in range(J):
                 hj = hs[j, :]
-                vij = np.array([angle_diff(zi[0], hj[0]), zi[1] - hj[1]])
+                vij = np.array([self.angle_diff(zi[0], hj[0]), zi[1] - hj[1]])
                 Hj = Hs[j]
                 Sij = np.matmul(Hj, np.matmul(self.Sigma, np.transpose(Hj))) + Qi
                 dij = np.matmul(vij, np.matmul(np.linalg.inv(Sij), vij.reshape(2, 1)))[0]
@@ -254,3 +240,17 @@ class EkfSlam(Ekf):
             Hx_list.append(Hx)
 
         return hs, Hx_list
+    
+    def angle_diff(self, a, b):
+        a = a % (2.0 * np.pi)
+        b = b % (2.0 * np.pi)
+        diff = a - b
+        if np.size(diff) == 1:
+            if np.abs(a - b) > np.pi:
+                sign = 2.0 * (diff < 0.0) - 1.0
+                diff += sign * 2.0 * np.pi
+        else:
+            idx = np.abs(diff) > np.pi
+            sign = 2.0 * (diff[idx] < 0.0) - 1.0
+            diff[idx] += sign * 2.0 * np.pi
+        return diff
