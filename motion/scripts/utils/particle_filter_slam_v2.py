@@ -1,6 +1,7 @@
 import numpy as np
-import scipy.linalg 
-import scipy.stats
+import scipy.linalg
+import scipy.stats 
+import random
 
 EPSILON_OMEGA = 1e-3
 
@@ -37,10 +38,11 @@ class ParticleFilter(object):
         Output:
             x: np.array[3,] - particle with the maximum weight.
         """
+        # x = np.average(self.xs, axis=0, weights=self.ws)
         idx = self.ws == self.ws.max()
-        x = np.zeros(self.xs.shape[1:])
-        x[:2] = self.xs[idx,:2].mean(axis=0)
-        th = self.xs[idx,2]
+        x = self.xs[idx].mean(axis=0)
+        th = self.xs[idx, 2]
+        # th = x[2]
         x[2] = np.arctan2(np.sin(th).mean(), np.cos(th).mean())
         return x
 
@@ -127,21 +129,23 @@ class ParticleFilter(object):
 
 class MonteCarloLocalization(ParticleFilter):
 
-    def __init__(self, x0, R, map_lines, tf_base_to_camera, g):
+    def __init__(self, x0, R, tf_base_to_camera, g):
         """
         MonteCarloLocalization constructor.
 
         Inputs:
                        x0: np.array[M,3] - initial particle states.
                         R: np.array[2,2] - control noise covariance (corresponding to dt = 1 second).
-                map_lines: np.array[J,2] - J map lines in rows representing (alpha, r).
         tf_base_to_camera: np.array[3,]  - (x, y, theta) transform from the
                                            robot base to camera frame.
                         g: float         - validation gate.
         """
-        self.map_lines = map_lines  # Matrix of J map lines with (alpha, r) as rows
         self.tf_base_to_camera = tf_base_to_camera  # (x, y, theta) transform
         self.g = g  # Validation gate
+        self.update = 0 # To expand the state
+        self.feature_not_seen = np.empty(0) # Number of times a feature was NOT seen
+        self.reject = 5 # Remove feature from state if not seen exceeds this
+        self.P_map = np.empty(shape=(0, 0)) # Covariance for line parameters
         super(self.__class__, self).__init__(x0, R)
 
     def transition_model(self, us, dt):
@@ -176,9 +180,13 @@ class MonteCarloLocalization(ParticleFilter):
         g2 = np.vstack((x_new2, y_new2, theta_new2)).T
 
         # final g matrix
-        g = np.zeros((self.M, 3))
-        g[idx1, :] = g1
-        g[idx2, :] = g2
+        g = np.zeros((self.M, self.xs.shape[1]))
+        J = (self.xs.shape[1] - 3) // 2
+        if J > 0:
+            u_map = np.random.multivariate_normal(np.zeros(2*J), self.P_map, self.M)
+            g[:, 3:] = self.xs[:, 3:] + u_map
+        g[idx1, :3] = g1
+        g[idx2, :3] = g2
 
         return g
 
@@ -195,12 +203,14 @@ class MonteCarloLocalization(ParticleFilter):
         Output:
             None - internal belief state (self.x, self.ws) is updated in self.resample().
         """
-        xs = np.copy(self.xs)
         ws = np.zeros_like(self.ws)
 
         # Compute new particles (xs, ws) with updated measurement weights.
         vs, Q = self.measurement_model(z_raw, Q_raw)
+        if vs is None:
+            return
         ws = scipy.stats.multivariate_normal.pdf(vs, mean=None, cov=Q)
+        xs = np.copy(self.xs)
 
         self.resample(xs, ws)
 
@@ -218,6 +228,14 @@ class MonteCarloLocalization(ParticleFilter):
             z: np.array[M,2I]  - joint measurement mean for M particles.
             Q: np.array[2I,2I] - joint measurement covariance.
         """
+        if self.update % 50 == 0:
+            for i in range(z_raw.shape[0]):
+                # if random.uniform(0, 1) < 0.5:
+                self.expand_state(z_raw[i, :], Q_raw[i])
+        self.update += 1
+
+        self.shrink_state()
+
         vs = self.compute_innovations(z_raw, np.array(Q_raw))
 
         # Compute Q.
@@ -244,6 +262,9 @@ class MonteCarloLocalization(ParticleFilter):
         I = z_raw.shape[0]  # Number of observed lines
         J = hs.shape[1]  # Number of predicted lines
 
+        if J == 0:
+            return None
+
         mat = np.zeros((self.M, I, J, 2))  # stores vij for each observation and each sample
 
         # compute difference between observed and predicted values
@@ -269,6 +290,13 @@ class MonteCarloLocalization(ParticleFilter):
         # indexing from 'mat' to get 'vs'
         vs = mat[i1, i2, idx.flatten(), :].reshape((self.M, I, 2))
 
+        max_ws_idx = self.ws == self.ws.max()
+        for j in range(J):
+            if j in idx[max_ws_idx]:
+                self.feature_not_seen[j] = 0
+            else:
+                self.feature_not_seen[j] += 1
+
         # Reshape [M x I x 2] array to [M x 2I]
         return vs.reshape((self.M,-1))  # [M x 2I]
 
@@ -284,7 +312,7 @@ class MonteCarloLocalization(ParticleFilter):
             hs: np.array[M,J,2] - J line parameters in the scanner (camera) frame for M particles.
         """
         # Compute hs.
-        J = self.map_lines.shape[1]
+        J = (self.xs.shape[1] - 3) // 2
         hs = np.zeros((self.M, J, 2))
 
         # pose of the camera in the world frame
@@ -294,13 +322,9 @@ class MonteCarloLocalization(ParticleFilter):
                 self.tf_base_to_camera[1] * np.cos(self.xs[:, 2])
         th_cam = self.xs[:, 2] + self.tf_base_to_camera[2]
 
-        # line parameters in the world frame
-        alpha = self.map_lines[0, :]
-        r = self.map_lines[1, :]
-
         # broadcast 1D arrays to M x J matrices
-        alpha_MJ = np.tile(alpha, (self.M, 1))
-        r_MJ = np.tile(r, (self.M, 1))
+        alpha_MJ = self.xs[:, 3 : 2 * J + 3 : 2]
+        r_MJ = self.xs[:, 4 : 2 * J + 3 : 2]
         x_cam_MJ = np.tile(x_cam.reshape(self.M, 1), J)
         y_cam_MJ = np.tile(y_cam.reshape(self.M, 1), J)
         th_cam_MJ = np.tile(th_cam.reshape(self.M, 1), J)
@@ -322,7 +346,63 @@ class MonteCarloLocalization(ParticleFilter):
 
         return hs
     
-    def angle_diff(a, b):
+    def expand_state(self, z, Q):
+        z = z[np.newaxis, :]
+        Q = Q[np.newaxis, :]
+        hs = self.compute_predicted_measurements()
+        I = 1  # Number of observed lines
+        J = hs.shape[1]  # Number of predicted lines
+        dij_min = np.inf
+
+        if J > 0:
+            mat = np.zeros((self.M, I, J, 2))  # stores vij for each observation and each sample
+
+            # compute difference between observed and predicted values
+            alpha_diff = self.angle_diff(np.expand_dims(z[:, 0], axis=(1, 2)),
+                                    np.expand_dims(hs[:, :, 0], axis=0))
+            r_diff = np.expand_dims(z[:, 1], axis=(1, 2)) - np.expand_dims(hs[:, :, 1], axis=0)
+            mat[:, :, :, 0] = alpha_diff.transpose(1, 0, 2)
+            mat[:, :, :, 1] = r_diff.transpose(1, 0, 2)
+
+            # changes dimensions of Q_raw from I x 2 x 2 to M x I x 2 x 2
+            Q_big = np.repeat(Q[np.newaxis, :, :, :], self.M, axis=0)
+
+            # 'maha_dist' stores the Mahalanobis distance on its diagonals for each
+            # observation and each sample. Its dimensions are M x I x J x J
+            maha_dist = np.matmul(mat, np.matmul(np.linalg.inv(Q_big), mat.transpose(0, 1, 3, 2)))
+            diag_elements = np.diagonal(maha_dist, axis1=2, axis2=3)
+            diag_elements = diag_elements.reshape((self.M, J))
+
+            max_ws_idx = self.ws == self.ws.max()
+            dij_min = diag_elements[max_ws_idx].min()
+
+        if dij_min > self.g ** 2:
+            x_cam = self.xs[:, 0] + self.tf_base_to_camera[0] * np.cos(self.xs[:, 2]) - self.tf_base_to_camera[1] * np.sin(self.xs[:, 2])
+            y_cam = self.xs[:, 1] + self.tf_base_to_camera[0] * np.sin(self.xs[:, 2]) + self.tf_base_to_camera[1] * np.cos(self.xs[:, 2])
+            th_cam = self.xs[:, 2] + self.tf_base_to_camera[2]
+            alpha_in_world = z[0][0] + th_cam
+            r_in_world = z[0][1] + np.multiply(x_cam, np.cos(alpha_in_world)) + np.multiply(y_cam, np.sin(alpha_in_world))
+            alpha_in_world = alpha_in_world.reshape((-1, 1))
+            r_in_world = r_in_world.reshape((-1, 1))
+            self.xs = np.hstack((self.xs, alpha_in_world, r_in_world))
+            P = np.diag(np.array([0.001**2 , 0.002**2]))
+            self.P_map = scipy.linalg.block_diag(self.P_map, P)
+            self.feature_not_seen = np.append(self.feature_not_seen, 0)
+
+    def shrink_state(self):
+        remove_idx = np.where(self.feature_not_seen >= self.reject)[0]
+        self.feature_not_seen = np.delete(self.feature_not_seen, remove_idx)
+        idx_list = []
+        idx_list_P = []
+        for idx in remove_idx:
+            idx_list.append(2*idx + 3)
+            idx_list.append(2*idx + 4)
+            idx_list_P.append(2*idx)
+            idx_list_P.append(2*idx + 1)
+        self.xs = np.delete(self.xs, idx_list, axis=1)
+        self.P_map = np.delete(np.delete(self.P_map, idx_list_P, axis=0), idx_list_P, axis=1)
+    
+    def angle_diff(self, a, b):
         a = a % (2. * np.pi)
         b = b % (2. * np.pi)
         diff = a - b

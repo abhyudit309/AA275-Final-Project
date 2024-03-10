@@ -13,8 +13,13 @@ find_package(ament_cmake REQUIRED)
 
 install(PROGRAMS
   scripts/keyboard_teleop.py
-  scripts/localization/ekf_slam.py
-  scripts/localization/localization.py
+  scripts/frontier_explorer.py
+  scripts/navigator.py
+  scripts/localization/ekf_slam_node.py
+  scripts/localization/ekf_slam_node_v2.py
+  scripts/localization/localization_node.py
+  scripts/localization/pf_slam_node.py
+  scripts/localization/pf_slam_node_v2.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

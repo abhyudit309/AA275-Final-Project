@@ -11,13 +11,9 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
-    mc = LaunchConfiguration("mc")
-    num_particles = LaunchConfiguration("num_particles")
 
     return LaunchDescription([
         DeclareLaunchArgument("use_sim_time", default_value="true"),
-        DeclareLaunchArgument("mc", default_value="false"),
-        DeclareLaunchArgument("num_particles", default_value="1000"),
 
         IncludeLaunchDescription(
             PathJoinSubstitution([FindPackageShare("asl_tb3_sim"), "launch", "rviz.launch.py"]),
@@ -25,20 +21,31 @@ def generate_launch_description():
                 "config": PathJoinSubstitution([
                     FindPackageShare("motion"),
                     "rviz",
-                    "maze.rviz",
+                    "default.rviz",
                 ]),
                 "use_sim_time": use_sim_time,
             }.items(),
         ),
 
-        # Localization node
+        # relay RVIZ goal pose to some other channel
         Node(
-            executable="pf_slam_node.py",
+            executable="rviz_goal_relay.py",
+            package="asl_tb3_lib",
+            parameters=[
+                {"output_channel": "/cmd_nav"},
+            ],
+        ),
+
+        # publish robot state from TF tree
+        Node(
+            executable="state_publisher.py",
+            package="asl_tb3_lib",
+        ),
+
+        # student's navigatior node
+        Node(
+            executable="navigator.py",
             package="motion",
-            parameters=[{
-                "use_sim_time": use_sim_time,
-                "/mc": mc,
-                "/num_particles": num_particles
-            }]
+            parameters=[{"use_sim_time": use_sim_time}]
         )
     ])

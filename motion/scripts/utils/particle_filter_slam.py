@@ -1,5 +1,5 @@
 import numpy as np
-import scipy.linalg 
+import scipy.linalg
 import scipy.stats
 
 EPSILON_OMEGA = 1e-3
@@ -16,7 +16,7 @@ class ParticleFilter(object):
             localized_state = pf.x
     """
 
-    def __init__(self, x0, R):
+    def __init__(self, x0, R, P_map):
         """
         ParticleFilter constructor.
 
@@ -28,6 +28,7 @@ class ParticleFilter(object):
         self.xs = x0  # Particle set [M x 3]
         self.ws = np.repeat(1. / self.M, self.M)  # Particle weights (initialize to uniform) [M]
         self.R = R  # Control noise covariance (corresponding to dt = 1 second) [2 x 2]
+        self.P_map = P_map # Covariance for line parameters
 
     @property
     def x(self):
@@ -37,10 +38,11 @@ class ParticleFilter(object):
         Output:
             x: np.array[3,] - particle with the maximum weight.
         """
+        # x = np.average(self.xs, axis=0, weights=self.ws)
         idx = self.ws == self.ws.max()
-        x = np.zeros(self.xs.shape[1:])
-        x[:2] = self.xs[idx,:2].mean(axis=0)
-        th = self.xs[idx,2]
+        x = self.xs[idx].mean(axis=0)
+        th = self.xs[idx, 2]
+        # th = x[2]
         x[2] = np.arctan2(np.sin(th).mean(), np.cos(th).mean())
         return x
 
@@ -127,22 +129,20 @@ class ParticleFilter(object):
 
 class MonteCarloLocalization(ParticleFilter):
 
-    def __init__(self, x0, R, map_lines, tf_base_to_camera, g):
+    def __init__(self, x0, R, P_map, tf_base_to_camera, g):
         """
         MonteCarloLocalization constructor.
 
         Inputs:
                        x0: np.array[M,3] - initial particle states.
                         R: np.array[2,2] - control noise covariance (corresponding to dt = 1 second).
-                map_lines: np.array[J,2] - J map lines in rows representing (alpha, r).
         tf_base_to_camera: np.array[3,]  - (x, y, theta) transform from the
                                            robot base to camera frame.
                         g: float         - validation gate.
         """
-        self.map_lines = map_lines  # Matrix of J map lines with (alpha, r) as rows
         self.tf_base_to_camera = tf_base_to_camera  # (x, y, theta) transform
         self.g = g  # Validation gate
-        super(self.__class__, self).__init__(x0, R)
+        super(self.__class__, self).__init__(x0, R, P_map)
 
     def transition_model(self, us, dt):
         """
@@ -176,9 +176,12 @@ class MonteCarloLocalization(ParticleFilter):
         g2 = np.vstack((x_new2, y_new2, theta_new2)).T
 
         # final g matrix
-        g = np.zeros((self.M, 3))
-        g[idx1, :] = g1
-        g[idx2, :] = g2
+        J = (self.xs.shape[1] - 3) // 2
+        u_map = np.random.multivariate_normal(np.zeros(2*J), self.P_map, self.M)
+        g = np.zeros((self.M, self.xs.shape[1]))
+        g[:, 3:] = self.xs[:, 3:] + u_map
+        g[idx1, :3] = g1
+        g[idx2, :3] = g2
 
         return g
 
@@ -284,7 +287,7 @@ class MonteCarloLocalization(ParticleFilter):
             hs: np.array[M,J,2] - J line parameters in the scanner (camera) frame for M particles.
         """
         # Compute hs.
-        J = self.map_lines.shape[1]
+        J = (self.xs.shape[1] - 3) // 2
         hs = np.zeros((self.M, J, 2))
 
         # pose of the camera in the world frame
@@ -294,13 +297,9 @@ class MonteCarloLocalization(ParticleFilter):
                 self.tf_base_to_camera[1] * np.cos(self.xs[:, 2])
         th_cam = self.xs[:, 2] + self.tf_base_to_camera[2]
 
-        # line parameters in the world frame
-        alpha = self.map_lines[0, :]
-        r = self.map_lines[1, :]
-
         # broadcast 1D arrays to M x J matrices
-        alpha_MJ = np.tile(alpha, (self.M, 1))
-        r_MJ = np.tile(r, (self.M, 1))
+        alpha_MJ = self.xs[:, 3 : 2 * J + 3 : 2]
+        r_MJ = self.xs[:, 4 : 2 * J + 3 : 2]
         x_cam_MJ = np.tile(x_cam.reshape(self.M, 1), J)
         y_cam_MJ = np.tile(y_cam.reshape(self.M, 1), J)
         th_cam_MJ = np.tile(th_cam.reshape(self.M, 1), J)
@@ -322,7 +321,7 @@ class MonteCarloLocalization(ParticleFilter):
 
         return hs
     
-    def angle_diff(a, b):
+    def angle_diff(self, a, b):
         a = a % (2. * np.pi)
         b = b % (2. * np.pi)
         diff = a - b

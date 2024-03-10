@@ -6,7 +6,7 @@ from . import turtlebot_model as tb
 
 class Ekf(object):
     """
-    Base class for EKF Localization.
+    Base class for EKF Localization and SLAM.
 
     Usage:
         ekf = EKF(x0, Sigma0, R)
@@ -108,44 +108,56 @@ class Ekf(object):
         )
 
 
-class EkfLocalization(Ekf):
+class EkfSlam(Ekf):
     """
-    EKF Localization.
+    EKF SLAM.
     """
 
-    def __init__(self, x0, Sigma0, R, map_lines, tf_base_to_camera, g):
+    def __init__(self, x0, Sigma0, R, tf_base_to_camera, g):
         """
-        EkfLocalization constructor.
+        EKFSLAM constructor.
 
         Inputs:
-                       x0: np.array[3,]  - initial belief mean.
-                   Sigma0: np.array[3,3] - initial belief covariance.
-                        R: np.array[2,2] - control noise covariance (corresponding to dt = 1 second).
-                map_lines: np.array[J,2] - J map lines in rows representing (alpha, r).
+                       x0: np.array[3+2J,]     - initial belief mean.
+                   Sigma0: np.array[3+2J,3+2J] - initial belief covariance.
+                        R: np.array[2,2]       - control noise covariance
+                                                 (corresponding to dt = 1 second).
         tf_base_to_camera: np.array[3,]  - (x, y, theta) transform from the
                                            robot base to camera frame.
                         g: float         - validation gate.
         """
-        self.map_lines = (
-            map_lines  # Matrix of J map lines with (alpha, r) as rows
-        )
         self.tf_base_to_camera = tf_base_to_camera  # (x, y, theta) transform
         self.g = g  # Validation gate
         super(self.__class__, self).__init__(x0, Sigma0, R)
 
     def transition_model(self, u, dt):
         """
-        Turtlebot dynamics (unicycle model).
+        Combined Turtlebot + map dynamics.
+        Adapt this method from EkfLocalization.transition_model().
         """
-        # Compute g, Gx, Gu using tb.compute_dynamics().
-        g, Gx, Gu = tb.compute_dynamics(self.x, u, dt)
+        g = np.copy(self.x)
+        Gx = np.eye(self.x.size)
+        Gu = np.zeros((self.x.size, 2))
+
+        # Compute g, Gx, Gu.
+        g_ekf, Gx_ekf, Gu_ekf = tb.compute_dynamics(self.x[0:3], u, dt)
+        g[0:3] = g_ekf
+        Gx[0:3, 0:3] = Gx_ekf
+        Gu[0:3, 0:2] = Gu_ekf
 
         return g, Gx, Gu
 
     def measurement_model(self, z_raw, Q_raw):
         """
-        Assemble one joint measurement and covariance from the individual values
-        corresponding to each matched line feature.
+        Combined Turtlebot + map measurement model.
+        Adapt this method from EkfLocalization.measurement_model().
+
+        The ingredients for this model should look very similar to those for
+        EkfLocalization. In particular, essentially the only thing that needs to
+        change is the computation of Hx in self.compute_predicted_measurements()
+        and how that method is called in self.compute_innovations() (i.e.,
+        instead of getting world-frame line parameters from self.map_lines, you
+        must extract them from the state self.x).
         """
         v_list, Q_list, H_list = self.compute_innovations(z_raw, Q_raw)
         if not v_list:
@@ -156,7 +168,7 @@ class EkfLocalization(Ekf):
             )
             return None, None, None
 
-        # Compute z, Q.
+        # Compute z, Q, H.
         z = np.array(v_list).flatten()
         Q = scipy.linalg.block_diag(*Q_list)
         H = np.concatenate(H_list)
@@ -165,25 +177,25 @@ class EkfLocalization(Ekf):
 
     def compute_innovations(self, z_raw, Q_raw):
         """
-        Given lines extracted from the scanner data, tries to associate each one
-        to the closest map entry measured by Mahalanobis distance.
-
-        Inputs:
-            z_raw: np.array[I,2]   - I lines extracted from scanner data in
-                                     rows representing (alpha, r) in the scanner frame.
-            Q_raw: [np.array[2,2]] - list of I covariance matrices corresponding
-                                     to each (alpha, r) row of z_raw.
-        Outputs:
-            v_list: [np.array[2,]]  - list of at most I innovation vectors
-                                      (predicted map measurement - scanner measurement).
-            Q_list: [np.array[2,2]] - list of covariance matrices of the
-                                      innovation vectors (from scanner uncertainty).
-            H_list: [np.array[2,3]] - list of Jacobians of the innovation
-                                      vectors with respect to the belief mean self.x.
+        Adapt this method from EkfLocalization.compute_innovations().
         """
+        def angle_diff(a, b):
+            a = a % (2.0 * np.pi)
+            b = b % (2.0 * np.pi)
+            diff = a - b
+            if np.size(diff) == 1:
+                if np.abs(a - b) > np.pi:
+                    sign = 2.0 * (diff < 0.0) - 1.0
+                    diff += sign * 2.0 * np.pi
+            else:
+                idx = np.abs(diff) > np.pi
+                sign = 2.0 * (diff[idx] < 0.0) - 1.0
+                diff[idx] += sign * 2.0 * np.pi
+            return diff
+
         hs, Hs = self.compute_predicted_measurements()
 
-        # Compute v_list, Q_list, H_list
+        # Compute v_list, Q_list, H_list.
         v_list = []
         Q_list = []
         H_list = []
@@ -195,9 +207,9 @@ class EkfLocalization(Ekf):
             dij_min = np.inf
             for j in range(J):
                 hj = hs[j, :]
-                vij = np.array([self.angle_diff(zi[0], hj[0]), zi[1] - hj[1]])
+                vij = np.array([angle_diff(zi[0], hj[0]), zi[1] - hj[1]])
                 Hj = Hs[j]
-                Sij = Hj @ self.Sigma @ Hj.T + Qi 
+                Sij = np.matmul(Hj, np.matmul(self.Sigma, np.transpose(Hj))) + Qi
                 dij = np.matmul(vij, np.matmul(np.linalg.inv(Sij), vij.reshape(2, 1)))[0]
                 if dij < dij_min:
                     dij_min = dij
@@ -212,37 +224,33 @@ class EkfLocalization(Ekf):
 
     def compute_predicted_measurements(self):
         """
-        Given a single map line in the world frame, outputs the line parameters
-        in the scanner frame so it can be associated with the lines extracted
-        from the scanner measurements.
-
-        Input:
-            None
-        Outputs:
-                 hs: np.array[J,2]  - J line parameters in the scanner (camera) frame.
-            Hx_list: [np.array[2,3]] - list of Jacobians of h with respect to the belief mean self.x.
+        Adapt this method from EkfLocalization.compute_predicted_measurements().
         """
-        hs = np.zeros_like(self.map_lines)
+        J = (self.x.size - 3) // 2
+        hs = np.zeros((J, 2))
         Hx_list = []
-        for j in range(self.map_lines.shape[0]):
-            # Compute h, Hx using tb.transform_line_to_scanner_frame() for the j'th map line.
-            h, Hx = tb.transform_line_to_scanner_frame(self.map_lines[j, :], self.x, self.tf_base_to_camera)
+        for j in range(J):
+            idx_j = 3 + 2 * j
+            alpha, r = self.x[idx_j: idx_j + 2]
+
+            Hx = np.zeros((2, self.x.size))
+
+            # Compute h, Hx.
+            line = np.array([alpha, r])
+            h_ekf, Hx_ekf = tb.transform_line_to_scanner_frame(line, self.x[0:3], self.tf_base_to_camera)
+            h = h_ekf
+            Hx[:, 0:3] = Hx_ekf
+
+            # First two map lines are assumed fixed so we don't want to propagate
+            # any measurement correction to them.
+            if j >= 2:
+                Hx[:, idx_j:idx_j + 2] = np.eye(2)
+                Hx[1, idx_j] = self.x[0] * np.sin(alpha) - self.x[1] * np.cos(alpha) - \
+                                   self.tf_base_to_camera[0] * np.sin(self.x[2] - alpha) - \
+                                   self.tf_base_to_camera[1] * np.cos(self.x[2] - alpha)
+
             h, Hx = tb.normalize_line_parameters(h, Hx)
             hs[j, :] = h
             Hx_list.append(Hx)
 
         return hs, Hx_list
-    
-    def angle_diff(self, a, b):
-        a = a % (2.0 * np.pi)
-        b = b % (2.0 * np.pi)
-        diff = a - b
-        if np.size(diff) == 1:
-            if np.abs(a - b) > np.pi:
-                sign = 2.0 * (diff < 0.0) - 1.0
-                diff += sign * 2.0 * np.pi
-        else:
-            idx = np.abs(diff) > np.pi
-            sign = 2.0 * (diff[idx] < 0.0) - 1.0
-            diff[idx] += sign * 2.0 * np.pi
-        return diff

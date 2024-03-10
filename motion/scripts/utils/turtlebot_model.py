@@ -157,6 +157,44 @@ def transform_line_to_scanner_frame(line, x, tf_base_to_camera, compute_jacobian
 
     return h, Hx
 
+def transform_line_to_world_frame(line, x, tf_base_to_camera):
+    """
+    Given a single map line in the camera frame, outputs the line parameters
+    in the world frame so it can be associated with the lines present in the state.
+
+    Input:
+                     line: np.array[2,] - map line (alpha, r) in camera frame.
+                        x: np.array[3,] - pose of base (x, y, theta) in world frame.
+        tf_base_to_camera: np.array[3,] - pose of camera (x, y, theta) in base frame.
+
+    Outputs:
+         h: np.array[2,]  - line parameters in the world frame.
+    """
+    alpha, r = line
+
+    ########## Code starts here ##########
+    # TODO: Compute h, Hx
+    # HINT: Calculate the pose of the camera in the world frame (x_cam, y_cam, th_cam), a rotation matrix may be useful.
+    # HINT: To compute line parameters in the camera frame h = (alpha_in_cam, r_in_cam), 
+    #       draw a diagram with a line parameterized by (alpha,r) in the world frame and 
+    #       a camera frame with origin at x_cam, y_cam rotated by th_cam wrt to the world frame
+    # HINT: What is the projection of the camera location (x_cam, y_cam) on the line r? 
+    # HINT: To find Hx, write h in terms of the pose of the base in world frame (x_base, y_base, th_base)
+
+    # pose of the camera in the world frame
+    x_cam = x[0] + tf_base_to_camera[0] * np.cos(x[2]) - tf_base_to_camera[1] * np.sin(x[2])
+    y_cam = x[1] + tf_base_to_camera[0] * np.sin(x[2]) + tf_base_to_camera[1] * np.cos(x[2])
+    th_cam = x[2] + tf_base_to_camera[2]
+
+    # line parameters in the camera frame
+    alpha_in_world = alpha + th_cam
+    r_in_world = r + x_cam * np.cos(alpha_in_world) + y_cam * np.sin(alpha_in_world)
+    h = np.array([alpha_in_world, r_in_world])
+
+    ########## Code ends here ##########
+
+    return h
+
 
 def normalize_line_parameters(h, Hx=None):
     """

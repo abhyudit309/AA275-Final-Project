@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# Runs EKF SLAM with unknown correspondences
+
 import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
@@ -19,9 +21,9 @@ from collections import deque
 import threading
 
 from asl_tb3_lib.tf_utils import quaternion_to_yaw, quaternion_from_euler
-from utils.ekf import EkfSlam
+from utils.ekf_slam_v2 import EkfSlam
 from utils.ExtractLines import ExtractLines
-from utils.maze_sim_parameters import LineExtractionParams, NoiseParams, MAZE, MapParams
+from utils.maze_sim_parameters import LineExtractionParams, NoiseParams, ARENA
 
 def convert_to_time(time_msg: Time_msg):
     return time_msg.sec + time_msg.nanosec * 1e-9
@@ -40,7 +42,7 @@ def create_transform_msg(translation, rotation, child_frame, base_frame, time):
     t.transform.rotation.w = rotation[3]
     return t
 
-def line_endpoints_from_alpha_and_r(alpha, r, d = 50.0):
+def line_endpoints_from_alpha_and_r(alpha, r, d = 10.0):
     return ((r*np.cos(alpha) - d*np.sin(alpha), r*np.sin(alpha) + d*np.cos(alpha)),
             (r*np.cos(alpha) + d*np.sin(alpha), r*np.sin(alpha) - d*np.cos(alpha)))
 
@@ -57,14 +59,6 @@ class EKF_SLAM_Visualizer(Node):
         self.base_to_camera = None
         self.controls = deque()
         self.scans = deque()
-
-        N_map_lines = MapParams.shape[1]
-        self.x0_map = MapParams.T.flatten()
-        self.x0_map[4:] = self.x0_map[4:] + np.vstack((NoiseParams["std_alpha"]*np.random.randn(N_map_lines-2),    # first two lines fixed
-                                                       NoiseParams["std_r"]*np.random.randn(N_map_lines-2))).T.flatten()
-        self.P0_map = np.diag(np.concatenate((np.zeros(4),
-                              np.array([[NoiseParams["std_alpha"]**2 for i in range(N_map_lines-2)],
-                                        [NoiseParams["std_r"]**2 for i in range(N_map_lines-2)]]).T.flatten())))
 
         ## Set up publishers and subscribers
         self.tfBroadcaster = tf2_ros.TransformBroadcaster(self)
@@ -89,7 +83,7 @@ class EKF_SLAM_Visualizer(Node):
         self.ground_truth_map_marker.color.a = 1.0
         self.ground_truth_map_marker.lifetime = Duration(seconds=1000).to_msg()
         self.ground_truth_map_marker.points = sum([[Point(x=float(p1[0]), y=float(p1[1]), z=0.0),
-                                                    Point(x=float(p2[0]), y=float(p2[1]), z=0.0)] for p1, p2 in MAZE], [])
+                                                    Point(x=float(p2[0]), y=float(p2[1]), z=0.0)] for p1, p2 in ARENA], [])
 
         self.EKF_map_pub = self.create_publisher(Marker, "EKF_map", 10)
         self.EKF_map_marker = deepcopy(self.ground_truth_map_marker)
@@ -163,10 +157,8 @@ class EKF_SLAM_Visualizer(Node):
         while not self.base_to_camera:
             run_rate.sleep()
 
-        self.EKF = EkfSlam(np.concatenate((x0_pose, self.x0_map)), scipy.linalg.block_diag(P0_pose, self.P0_map),
-                           NoiseParams["R"], self.base_to_camera, 2*NoiseParams["g"])
-        self.OLC = EkfSlam(np.concatenate((x0_pose, self.x0_map)), scipy.linalg.block_diag(P0_pose, self.P0_map),
-                           NoiseParams["R"], self.base_to_camera, 2*NoiseParams["g"])
+        self.EKF = EkfSlam(x0_pose, P0_pose, NoiseParams["R"], self.base_to_camera, 2*NoiseParams["g"])
+        self.OLC = EkfSlam(x0_pose, P0_pose, NoiseParams["R"], self.base_to_camera, 2*NoiseParams["g"])
 
         while True:
             if not self.scans:
@@ -174,9 +166,11 @@ class EKF_SLAM_Visualizer(Node):
                 continue
 
             self.EKF_map_marker.points = []
-            for j in range(int((self.EKF.x.size - 3)/2)):
+            J = int((self.EKF.x.size - 3) / 2)
+            for j in range(J):
                 p1, p2 = line_endpoints_from_alpha_and_r(self.EKF.x[3+2*j], self.EKF.x[3+2*j+1])
                 self.EKF_map_marker.points.extend([Point(x=p1[0], y=p1[1], z=0.0), Point(x=p2[0], y=p2[1], z=0.0)])
+            self.get_logger().info(f"Total map features: {J}")
             self.ground_truth_map_pub.publish(self.ground_truth_map_marker)
             self.EKF_map_pub.publish(self.EKF_map_marker)
 
