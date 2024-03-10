@@ -20,6 +20,7 @@ install(PROGRAMS
   scripts/localization/localization_node.py
   scripts/localization/pf_slam_node.py
   scripts/localization/pf_slam_node_v2.py
+  scripts/output/write_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

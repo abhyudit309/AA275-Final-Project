@@ -9,7 +9,7 @@ from rclpy.time import Time
 from builtin_interfaces.msg import Time as Time_msg
 
 from sensor_msgs.msg import LaserScan, PointCloud, ChannelFloat32
-from geometry_msgs.msg import Twist, TransformStamped, Point32, PoseStamped
+from geometry_msgs.msg import Twist, TransformStamped, Point32, PoseStamped, Point
 
 import numpy as np
 import tf2_ros
@@ -68,6 +68,10 @@ class LocalizationVisualizer(Node):
 
         if self.mc:
             self.particles_pub = self.create_publisher(PointCloud, 'particle_filter', 10)
+
+        # publishers for sending pose information
+        self.localization_pose_pub = self.create_publisher(Point, 'localization_pose', 10)
+        self.open_loop_pose_pub = self.create_publisher(Point, 'open_loop_pose', 10)
         
         ## Use simulation time
         self.set_parameters([Parameter('use_sim_time', rclpy.Parameter.Type.BOOL, True)])
@@ -181,6 +185,12 @@ class LocalizationVisualizer(Node):
                     "open_loop", "odom", self.EKF_time)
                 )
 
+                # sending time on z
+                localization_pose = Point(x=self.EKF.x[0], y=self.EKF.x[1], z=convert_to_time(self.EKF_time))
+                open_loop_pose = Point(x=self.OLC.x[0], y=self.OLC.x[1], z=convert_to_time(self.EKF_time))
+                self.localization_pose_pub.publish(localization_pose)
+                self.open_loop_pose_pub.publish(open_loop_pose)
+                
                 if self.mc:
                     particles.header.stamp = self.EKF_time
                     for m in range(self.num_particles):

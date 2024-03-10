@@ -40,5 +40,12 @@ def generate_launch_description():
                 "/mc": mc,
                 "/num_particles": num_particles
             }]
+        ),
+
+        # Writer node
+        Node(
+            executable="write_node.py",
+            package="motion",
+            parameters=[{"use_sim_time": use_sim_time}]
         )
     ])
