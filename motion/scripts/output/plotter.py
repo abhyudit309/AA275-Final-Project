@@ -12,7 +12,6 @@ def read_file(file_path):
 
 def plot_from_files(file_paths, labels):
     plt.figure(figsize=(8, 6))
-
     i = 0
     for file_path in file_paths:
         time, x_values, _ = read_file(file_path)
@@ -26,6 +25,7 @@ def plot_from_files(file_paths, labels):
     plt.grid(True)
     plt.show()
 
+    plt.figure(figsize=(8, 6))
     i = 0
     for file_path in file_paths:
         time, _, y_values = read_file(file_path)
@@ -40,6 +40,6 @@ def plot_from_files(file_paths, labels):
     plt.show()
 
 if __name__ == '__main__':
-    file_paths = ['gt_pose.txt', 'local_pose.txt', 'ol_pose.txt']
+    file_paths = ['ekf_gt_pose.txt', 'ekf_local_pose.txt', 'ekf_ol_pose.txt']
     labels = ['ground truth', 'localization', 'open loop']
     plot_from_files(file_paths, labels)

@@ -7,7 +7,7 @@ LineExtractionParams = {'MIN_SEG_LENGTH': 0.1,             # minimum length of e
                         'MIN_POINTS_PER_SEGMENT': 3}       # minimum number of points per line segment
 
 NoiseParams = {'Sigma0': 0.01*np.eye(3),  # initial state covariance (x0 comes from ground truth; nonzero in case of timing mismatch)
-               'R': 0.1*np.eye(2),    # control noise covariance (corresponding to dt = 1 second)
+               'R': 0.05*np.eye(2),    # control noise covariance (corresponding to dt = 1 second)
                'var_theta': 0.03,     # laser scan noise variance in theta measurement (per point)
                'var_rho': 0.05,       # laser scan noise variance in rho measurement (per point)
                'g': 3.,               # validation gate (essentially maximum z-score)

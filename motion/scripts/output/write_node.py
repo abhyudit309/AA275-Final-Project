@@ -11,9 +11,9 @@ class InfoWriter(Node):
         self.open_loop_pose_sub = self.create_subscription(Point, 'open_loop_pose', self.open_loop_callback, 10)
 
         self.location = "/home/abhyudit/ros2_ws/src/AA275-Final-Project/motion/scripts/output/"
-        self.gt_file = open(f'{self.location}gt_pose.txt', 'w')
-        self.local_file = open(f'{self.location}local_pose.txt', 'w')
-        self.ol_file = open(f'{self.location}ol_pose.txt', 'w')
+        self.gt_file = open(f'{self.location}mcl_slam_v2_gt_pose.txt', 'w')
+        self.local_file = open(f'{self.location}mcl_slam_v2_local_pose.txt', 'w')
+        self.ol_file = open(f'{self.location}mcl_slam_v2_ol_pose.txt', 'w')
 
     def gt_callback(self, msg : PoseStamped):
         x = msg.pose.position.x
