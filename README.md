@@ -24,7 +24,7 @@
 4. Build the code:
 
     ```bash
-    cd ~/tb_ws
+    cd ~/ros2_ws
     colcon build --symlink-install
     ```
 
@@ -33,3 +33,24 @@
     ```bash
     source ~/ros2_ws/install/setup.bash
     ```
+
+## Run
+
+1. Start ROS and Gazebo with a simulated TurtleBot in an arena world:
+
+   ```bash
+   ros2 launch asl_tb3_sim arena.launch.py
+   ```
+
+2. From another terminal, launch the localization node:
+
+   ```bash
+   source ~/ros2_ws/install/setup.bash
+   ros2 launch motion localization_arena.launch.py
+   ```
+3. From another terminal, run the teleoperation node:
+
+   ```bash
+   source ~/ros2_ws/install/setup.bash
+   ros2 run motion keyboard_teleop.py
+   ```
